@@ -7,16 +7,16 @@ use nom::character::complete::{anychar, char, multispace0};
 use nom::combinator::{all_consuming, map, not, recognize, rest, verify};
 use nom::sequence::{delimited, preceded, terminated};
 
-pub(self) mod lua {
-    use std::thread::LocalKey;
+pub(crate) mod lua {
+    use std::fmt::{self, Binary};
 
     use super::*;
     use nom::{
         bytes::complete::tag,
-        character::complete::{digit1, multispace1},
+        character::complete::{alpha1, alphanumeric1, digit1, multispace1},
         combinator::opt,
         multi::{many0, many1, separated_list0},
-        sequence::tuple,
+        sequence::{pair, tuple},
     };
 
     type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
@@ -40,14 +40,156 @@ pub(self) mod lua {
     }
 
     #[derive(Debug, PartialEq)]
-    struct Error(PosInfo, String);
+    pub struct Error(PosInfo, String);
 
     #[derive(Clone, Debug)]
-    struct State<'a>(&'a RefCell<Vec<Error>>);
+    pub struct State<'a>(&'a RefCell<Vec<Error>>);
 
     impl<'a> State<'a> {
         pub fn report_error(&self, error: Error) {
             self.0.borrow_mut().push(error);
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Chunk {
+        pub stats: Vec<Stat>,
+        pub laststat: Option<LastStat>,
+    }
+
+    #[derive(Debug)]
+    pub enum Stat {
+        FuncCall(FuncCall),
+        FuncDef(FuncDef),
+        Cond(Cond),
+        Local(Local),
+        Assign(Assign),
+        Error,
+    }
+
+    #[derive(Debug)]
+    pub struct Cond{
+        pub pairs: Vec<(Exp, Block)>
+    }
+
+    #[derive(Debug)]
+    pub struct Local {
+        pub lhs: Ident,
+        pub rhs: Vec<Exp>,
+    }
+
+    #[derive(Debug)]
+    pub struct Assign {
+        pub lhs: Ident,
+        pub rhs: Vec<Exp>,
+    }
+
+    #[derive(Debug)]
+    pub enum LastStat {
+        Return(Return),
+        Break(String),
+        Error,
+    }
+
+    #[derive(Debug)]
+    pub struct Return {
+        pub exps: Vec<Exp>,
+    }
+
+    #[derive(Debug)]
+    pub struct FuncDef {
+        pub name: String,
+        pub body: FuncBody,
+    }
+
+    #[derive(Debug)]
+    pub struct FuncCall {
+        pub name: String,
+        pub args: Vec<Exp>,
+    }
+
+    #[derive(Debug)]
+    pub struct FuncBody {
+        pub params: Vec<String>,
+        pub block: Block,
+    }
+
+    #[derive(Debug)]
+    pub enum Block {
+        Chunk(Chunk),
+        Error,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum Number {
+        Integer(i32),
+        Float(f32),
+        Error,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum Op {
+        Plus,
+        Subtract,
+        Multiply,
+        Divide,
+        LessThan,
+        Error,
+    }
+
+    #[derive(Debug)]
+    pub struct Binop {
+        pub exps: Vec<Exp>,
+        pub ops: Vec<Op>,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Value {
+        Number(Number),
+        String(String),
+        Error,
+    }
+
+    impl fmt::Display for Number {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match self {
+                Number::Error => write!(f, "NaN"),
+                Number::Integer(i) => write!(f, "{}", i),
+                Number::Float(_f) => write!(f, "{}", _f),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Ident {
+        pub name: String,
+        pub value: Value,
+    }
+
+    #[derive(Debug)]
+    pub enum Exp {
+        Number(Number),
+        String(String),
+        Ident(Ident),
+        Binop(Binop),
+        FuncCall(FuncCall),
+        True,
+        Error,
+    }
+
+    #[derive(Debug)]
+    pub enum Lua {
+        Chunk(Chunk),
+        Error,
+    }
+
+    impl From<Exp> for String {
+        fn from(exp: Exp) -> Self {
+            match exp {
+                Exp::Ident(i) => i.name,
+                Exp::String(i) => i,
+                _ => "Error conversion".to_owned(),
+            }
         }
     }
 
@@ -78,134 +220,95 @@ pub(self) mod lua {
         }
     }
 
-    #[derive(Debug)]
-    struct Chunk {
-        stats: Vec<Stat>,
-        laststat: Option<LastStat>,
-    }
-
-    #[derive(Debug)]
-    enum Stat {
-        FuncCall(FuncCall),
-        FuncDef(FuncDef),
-        Cond(Cond),
-        Local(Local),
-        Error,
-    }
-
-    #[derive(Debug)]
-    struct Cond(Vec<(Exp, Block)>);
-
-    #[derive(Debug)]
-    struct Local((Exp, Vec<Exp>));
-
-    #[derive(Debug)]
-    enum LastStat {
-        Return(Return),
-        Break(String),
-    }
-
-    #[derive(Debug)]
-    struct Return {
-        exps: Vec<Exp>,
-    }
-
-    #[derive(Debug)]
-    struct FuncDef {
-        name: String,
-        body: FuncBody,
-    }
-
-    #[derive(Debug)]
-    struct FuncCall {
-        name: String,
-        args: Vec<Exp>,
-    }
-
-    #[derive(Debug)]
-    struct FuncBody {
-        params: Vec<String>,
-        block: Block,
-    }
-
-    #[derive(Debug)]
-    enum Block {
-        Chunk(Chunk),
-        Error,
-    }
-
-    #[derive(Debug)]
-    enum Number {
-        U32(u32),
-        Error,
-    }
-
-    #[derive(Debug)]
-    enum Exp {
-        Number(Number),
-        String(String),
-        Ident(String),
-        Binop,
-        Error,
-        FuncCall(FuncCall),
-        True,
-    }
-    #[derive(Debug)]
-
-    enum Lua {
-        Chunk(Chunk),
-        Error,
-    }
-
-    impl From<Exp> for String {
-        fn from(exp: Exp) -> Self {
-            match exp {
-                Exp::Ident(i) => i,
-                Exp::String(i) => i,
-                _ => "Error conversion".to_owned(),
-            }
-        }
-    }
-
     fn funccall(input: LocatedSpan) -> IResult<FuncCall> {
-        let call = tuple((ws(ident), ws(char('(')), many0(exp), ws(char(')'))));
-        map(call, |(name, _, args, _)| FuncCall {
-            name: name.into(),
+        let call = tuple((
+            ws(ident),
+            ws(char('(')),
+            separated_list0(ws(char(',')), exp),
+            ws(char(')')),
+        ));
+        map(call, |(id, _, args, _)| FuncCall {
+            name: id.name,
             args,
         })(input)
     }
 
     fn number(input: LocatedSpan) -> IResult<Exp> {
         map(digit1, |span: LocatedSpan| {
-            Exp::Number(match span.fragment().parse::<u32>() {
-                Ok(n) => Number::U32(n),
+            Exp::Number(match span.fragment().parse::<i32>() {
+                Ok(n) => Number::Integer(n),
                 Err(_) => Number::Error,
             })
         })(input)
     }
 
-    fn ident(input: LocatedSpan) -> IResult<Exp> {
-        let first = verify(anychar, |c| c.is_ascii_alphabetic() || *c == '_');
-        let rest = take_while(|c: char| c.is_ascii_alphanumeric() || "_-'".contains(c));
-        let ident2 = recognize(preceded(first, rest));
-        map(ws(ident2), |span: LocatedSpan| {
-            Exp::Ident(span.fragment().to_string())
+    fn ident(input: LocatedSpan) -> IResult<Ident> {
+        let p = recognize(pair(
+            alt((alpha1, tag("_"))),
+            many0(alt((alphanumeric1, tag("_")))),
+        ));
+        map(ws(p), |span: LocatedSpan| Ident {
+            name: span.fragment().to_string(),
+            value: Value::Error,
         })(input)
     }
 
-    fn binop(input: LocatedSpan) -> IResult<Exp> {
-        let parser = recognize(tuple((
-            alt((number, ident)),
-            ws(alt((char('+'), char('-'), char('*'), char('/'), char('<')))),
-            alt((number, ident)),
-        )));
-        map(ws(parser), |span: LocatedSpan| {
-            Exp::Ident(span.fragment().to_string())
+    fn opchar(input: LocatedSpan) -> IResult<char> {
+        alt((
+            char('+'),
+            char('-'),
+            char('*'),
+            char('/'),
+            char('<'),
+            char('>'),
+        ))(input)
+    }
+
+    fn op(input: LocatedSpan) -> IResult<Op> {
+        map(ws(many1(opchar)), |chars| {
+            let s: String = chars.into_iter().collect();
+            match s.as_str() {
+                "+" => Op::Plus,
+                "-" => Op::Subtract,
+                "*" => Op::Multiply,
+                "/" => Op::Divide,
+                "<" => Op::LessThan,
+                _ => Op::Error,
+            }
         })(input)
     }
 
-    fn exp(input: LocatedSpan) -> IResult<Exp> {
-        alt((binop, map(funccall, Exp::FuncCall), number, ident))(input)
+    pub fn binop(input: LocatedSpan) -> IResult<(Vec<Exp>, Vec<Op>)> {
+        let parser = tuple((ws(simple_exp), op, ws(exp_rec)));
+        map(ws(parser), |(lhs, op, mut rhs)| {
+            rhs.0.push(lhs);
+            rhs.1.push(op);
+            rhs
+        })(input)
+    }
+
+    fn simple_exp(input: LocatedSpan) -> IResult<Exp> {
+        alt((map(funccall, Exp::FuncCall), number, map(ident, Exp::Ident)))(input)
+    }
+
+    pub fn exp_rec(input: LocatedSpan) -> IResult<(Vec<Exp>, Vec<Op>)> {
+        alt((binop, map(simple_exp, |e| (vec![e], vec![]))))(input)
+    }
+
+    pub fn exp(input: LocatedSpan) -> IResult<Exp> {
+        map(exp_rec, |(mut exps, mut ops)| {
+            if ops.is_empty() {
+                exps.pop().unwrap()
+            } else {
+                Exp::Binop({
+                    // We don't have to reverse these vectors.
+                    // we do that simply to print the structure as it is
+                    exps.reverse();
+                    ops.reverse();
+                    Binop { exps, ops }
+                })
+            }
+        })(input)
     }
 
     fn ret(input: LocatedSpan) -> IResult<LastStat> {
@@ -226,7 +329,7 @@ pub(self) mod lua {
 
     fn namelist(input: LocatedSpan) -> IResult<Vec<String>> {
         map(separated_list0(char(','), ws(ident)), |v| {
-            v.into_iter().map(|x| x.into()).collect()
+            v.into_iter().map(|x| x.name).collect()
         })(input)
     }
 
@@ -266,7 +369,7 @@ pub(self) mod lua {
                 if (def_begin && def_end) {
                     Stat::FuncDef(FuncDef {
                         body,
-                        name: name.into(),
+                        name: name.name,
                     })
                 } else {
                     Stat::Error
@@ -296,21 +399,40 @@ pub(self) mod lua {
                 if let Some(l) = last {
                     result.push(l)
                 };
-                Stat::Cond(Cond(result))
+                Stat::Cond(Cond {
+                    pairs:result
+                })
             },
         )(input)
     }
 
-    fn local(input: LocatedSpan) -> IResult<Stat> {
+    pub fn local(input: LocatedSpan) -> IResult<Stat> {
         map(
             tuple((ws(tag("local")), ident, ws(tag("=")), many1(exp))),
-            |(_, name, _, explist)| Stat::Local(Local((name, explist))),
+            |(_, name, _, explist)| {
+                Stat::Local(Local {
+                    lhs: name,
+                    rhs: explist,
+                })
+            },
+        )(input)
+    }
+
+    pub fn assign(input: LocatedSpan) -> IResult<Stat> {
+        map(
+            tuple((ws(ident), ws(tag("=")), many1(exp))),
+            |(name, _, explist)| {
+                Stat::Assign(Assign {
+                    lhs: name,
+                    rhs: explist,
+                })
+            },
         )(input)
     }
 
     fn stat(input: LocatedSpan) -> IResult<Stat> {
         terminated(
-            alt((funcdef, map(funccall, Stat::FuncCall), cond, local)),
+            alt((funcdef, map(funccall, Stat::FuncCall), cond, local, assign)),
             ws(opt(char(';'))),
         )(input)
     }
@@ -333,26 +455,27 @@ pub(self) mod lua {
         )(input)
     }
 
-    fn parse(source: &str) -> (Lua, Vec<Error>) {
+    pub fn parse(source: &str) -> (Lua, Vec<Error>) {
         let errors = RefCell::new(Vec::new());
         let input = LocatedSpan::new_extra(source, State(&errors));
         let (_, lua) = all_consuming(source_file)(input).expect("parser cannot fail");
         (lua, errors.into_inner())
     }
 
+    pub fn test_parse<T, P>(source: &str, parser: P) -> (T, Vec<Error>)
+    where
+        P: FnMut(LocatedSpan) -> IResult<T>,
+    {
+        let errors = RefCell::new(Vec::new());
+        let input = LocatedSpan::new_extra(source, State(&errors));
+        let (_, output) = all_consuming(parser)(input).expect("parser cannot fail");
+        (output, errors.into_inner())
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
 
-        fn test_parse<T, P>(source: &str, parser: P) -> (T, Vec<Error>)
-        where
-            P: FnMut(LocatedSpan) -> IResult<T>,
-        {
-            let errors = RefCell::new(Vec::new());
-            let input = LocatedSpan::new_extra(source, State(&errors));
-            let (_, output) = all_consuming(parser)(input).expect("parser cannot fail");
-            (output, errors.into_inner())
-        }
         #[test]
         fn test_laststat() {
             let empty = vec![];
@@ -364,6 +487,8 @@ pub(self) mod lua {
             assert_eq!(&parse("  return n+1;  ").1[..], &empty);
             assert_eq!(&parse("  return 1   +n;  ").1[..], &empty);
             assert_eq!(&parse("  return n;  ").1[..], &empty);
+            assert_eq!(&parse("  return a+1+2+d+e;  ").1[..], &empty);
+            assert_eq!(&parse("  return f(a+1+2+d+e)+2;  ").1[..], &empty);
         }
 
         #[test]

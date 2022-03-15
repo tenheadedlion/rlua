@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 mod parser;
+mod compiler;
 use std::{
     fs::File,
     io::{BufWriter, Write},
