@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 mod parser;
 mod compiler;
+mod types;
 use std::{
     fs::File,
     io::{BufWriter, Write},
